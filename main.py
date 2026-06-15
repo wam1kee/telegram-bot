@@ -2,6 +2,8 @@ import asyncio
 import random
 import json
 import os
+import threading
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -35,6 +37,14 @@ def add_balance(user_id, amount):
     users_data[user_id]["balance"] += amount
     save_users()
 
+def remove_balance(user_id, amount):
+    user_id = str(user_id)
+    if get_balance(user_id) >= amount:
+        users_data[user_id]["balance"] -= amount
+        save_users()
+        return True
+    return False
+
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     balance = get_balance(msg.from_user.id)
@@ -52,9 +62,7 @@ async def play(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    remove_balance = get_balance(callback.from_user.id) - 10
-    users_data[str(callback.from_user.id)]["balance"] = remove_balance
-    save_users()
+    remove_balance(callback.from_user.id, 10)
     
     win = random.choice([True, False])
     if win:
@@ -94,8 +102,23 @@ async def confirm(msg: types.Message):
     else:
         await msg.answer("❌ Пример: /confirm 123456789 100")
 
+# ============ Flask для Render (чтобы был порт) ============
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return "Bot is running!"
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=10000)
+
+# Запускаем Flask в отдельном потоке
+threading.Thread(target=run_flask, daemon=True).start()
+# ==========================================================
+
 async def main():
     print("✅ Бот запущен")
+    print(f"👑 Админ: {ADMIN_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
