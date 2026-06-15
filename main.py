@@ -15,23 +15,43 @@ ADMIN_ID2 = 914664289
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Создаём папку для данных
+DATA_DIR = "/app/data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+PROMOS_FILE = os.path.join(DATA_DIR, "promos.json")
+
 users_data = {}
 promocodes = {}
 
-if os.path.exists("users.json"):
-    with open("users.json", "r") as f:
-        users_data = json.load(f)
-if os.path.exists("promos.json"):
-    with open("promos.json", "r") as f:
-        promocodes = json.load(f)
+def load_users():
+    global users_data
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            users_data = json.load(f)
+    else:
+        users_data = {}
 
 def save_users():
-    with open("users.json", "w") as f:
+    with open(USERS_FILE, "w") as f:
         json.dump(users_data, f, indent=4)
 
+def load_promos():
+    global promocodes
+    if os.path.exists(PROMOS_FILE):
+        with open(PROMOS_FILE, "r") as f:
+            promocodes = json.load(f)
+    else:
+        promocodes = {}
+
 def save_promos():
-    with open("promos.json", "w") as f:
+    with open(PROMOS_FILE, "w") as f:
         json.dump(promocodes, f, indent=4)
+
+load_users()
+load_promos()
 
 def is_admin(user_id):
     return user_id == ADMIN_ID or user_id == ADMIN_ID2
@@ -53,6 +73,7 @@ def add_balance(user_id, amount):
         users_data[user_id] = {"balance": 0, "promo_used": []}
     users_data[user_id]["balance"] += amount
     save_users()
+    print(f"✅ Баланс +{amount} для {user_id}. Новый баланс: {users_data[user_id]['balance']}")
 
 def remove_balance(user_id, amount):
     user_id = str(user_id)
@@ -83,7 +104,7 @@ def main_menu(user_id):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Играть", callback_data="play")],
         [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo")],
-        [InlineKeyboardButton(text="💰 Пополнить", callback_data="deposit")],
+        [InlineKeyboardButton(text="💰 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="📊 Профиль", callback_data="profile")],
         [InlineKeyboardButton(text="ℹ️ Как играть", callback_data="info")]
     ])
@@ -96,34 +117,14 @@ def main_menu(user_id):
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     balance = get_balance(msg.from_user.id)
-    await msg.answer(f"👋 Добро пожаловать!\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎\n💎 1 кристалл = 0.01$", reply_markup=main_menu(msg.from_user.id))
-
-# ============ ПОПОЛНЕНИЕ ============
-@dp.callback_query(lambda c: c.data == "deposit")
-async def deposit_menu(callback: types.CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="100 💎 - 1$", callback_data="deposit_100")],
-        [InlineKeyboardButton(text="500 💎 - 5$", callback_data="deposit_500")],
-        [InlineKeyboardButton(text="1000 💎 - 10$", callback_data="deposit_1000")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
-    ])
-    await callback.message.edit_text("💰 **Выбери сумму пополнения:**", reply_markup=kb, parse_mode="Markdown")
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data.startswith("deposit_"))
-async def process_deposit(callback: types.CallbackQuery):
-    amount = int(callback.data.split("_")[1])
-    await callback.message.edit_text(f"💎 **Пополнение на {amount} 💎**\n\n💰 Сумма: {amount // 100}$\n\n📌 Оплати и напиши админу @TgFidel с скриншотом\n🆔 Твой ID: `{callback.from_user.id}`", parse_mode="Markdown")
-    await callback.answer()
+    await msg.answer(f"👋 Добро пожаловать!\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎", reply_markup=main_menu(msg.from_user.id))
 
 # ============ ИГРЫ ============
 @dp.callback_query(lambda c: c.data == "play")
 async def play_menu(callback: types.CallbackQuery):
     balance = get_balance(callback.from_user.id)
     if balance == 0 or (balance != float('inf') and balance < 10):
-        await callback.message.answer("❌ Недостаточно средств! Пополни баланс", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Пополнить", callback_data="deposit")]
-        ]))
+        await callback.message.answer("❌ Недостаточно средств! Пополните баланс у админа.")
         await callback.answer()
         return
     
@@ -180,6 +181,31 @@ async def process_bet(msg: types.Message):
     except ValueError:
         await msg.answer("❌ Введи число!")
 
+# ============ БАЛАНС ============
+@dp.callback_query(lambda c: c.data == "balance")
+async def show_balance(callback: types.CallbackQuery):
+    balance = get_balance(callback.from_user.id)
+    await callback.message.answer(f"💰 Твой баланс: {balance if balance != float('inf') else '∞'} 💎")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "profile")
+async def profile(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    balance = get_balance(callback.from_user.id)
+    used_promos = len(users_data.get(user_id, {}).get("promo_used", []))
+    
+    await callback.message.edit_text(f"📊 **Твой профиль**\n\n🆔 ID: {callback.from_user.id}\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎\n🎁 Использовано промокодов: {used_promos}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
+    ]), parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "info")
+async def info(callback: types.CallbackQuery):
+    await callback.message.edit_text("🎲 **Как играть:**\n\n1. Пополни баланс у админа\n2. Нажми 'Играть'\n3. Выбери игру\n4. Сделай ставку (мин. 10 💎)\n5. Победа = x2", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
+    ]), parse_mode="Markdown")
+    await callback.answer()
+
 # ============ ПРОМОКОДЫ ============
 @dp.callback_query(lambda c: c.data == "promo")
 async def promo_menu(callback: types.CallbackQuery):
@@ -222,25 +248,6 @@ async def process_promo(msg: types.Message):
     
     await msg.answer(f"✅ Промокод активирован! +{promo['reward']} 💎\n💰 Новый баланс: {get_balance(user_id)} 💎", reply_markup=main_menu(user_id))
     del user_states[user_id]
-
-# ============ ПРОФИЛЬ ============
-@dp.callback_query(lambda c: c.data == "profile")
-async def profile(callback: types.CallbackQuery):
-    user_id = str(callback.from_user.id)
-    balance = get_balance(callback.from_user.id)
-    used_promos = len(users_data.get(user_id, {}).get("promo_used", []))
-    
-    await callback.message.edit_text(f"📊 **Твой профиль**\n\n🆔 ID: {callback.from_user.id}\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎\n🎁 Использовано промокодов: {used_promos}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
-    ]), parse_mode="Markdown")
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "info")
-async def info(callback: types.CallbackQuery):
-    await callback.message.edit_text("🎲 **Как играть:**\n\n1. Пополни баланс\n2. Нажми 'Играть'\n3. Выбери игру\n4. Сделай ставку (мин. 10 💎)\n5. Победа = x2\n\n🎁 Промокоды дают бесплатные кристаллы!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
-    ]), parse_mode="Markdown")
-    await callback.answer()
 
 # ============ АДМИН ПАНЕЛЬ ============
 @dp.callback_query(lambda c: c.data == "admin")
@@ -303,7 +310,54 @@ async def admin_stats(callback: types.CallbackQuery):
     await callback.message.answer(f"📊 **Статистика:**\n\n👥 Пользователей: {total_users}\n💰 Общий баланс: {total_balance} 💎", parse_mode="Markdown")
     await callback.answer()
 
-# ============ ОБРАБОТЧИКИ АДМИН КОМАНД ============
+@dp.callback_query(lambda c: c.data == "back")
+async def back(callback: types.CallbackQuery):
+    balance = get_balance(callback.from_user.id)
+    await callback.message.edit_text(f"👋 Главное меню\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎", reply_markup=main_menu(callback.from_user.id))
+    await callback.answer()
+
+# ============ АДМИН КОМАНДЫ ============
+@dp.message(Command("confirm"))
+async def confirm_balance(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        await msg.answer("❌ Нет доступа!")
+        return
+    
+    parts = msg.text.split()
+    if len(parts) != 3:
+        await msg.answer("❌ Формат: /confirm ID СУММА\nПример: /confirm 5049662929 100")
+        return
+    
+    try:
+        user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        old_balance = get_balance(user_id)
+        add_balance(user_id, amount)
+        new_balance = get_balance(user_id)
+        
+        await msg.answer(f"✅ Начислено {amount} 💎 пользователю {user_id}\n💰 Старый баланс: {old_balance}\n💰 Новый баланс: {new_balance}")
+        
+        try:
+            await bot.send_message(user_id, f"✅ Ваш баланс пополнен на {amount} 💎!\n💰 Новый баланс: {new_balance} 💎")
+        except:
+            pass
+    except:
+        await msg.answer("❌ Ошибка! Пример: /confirm 5049662929 100")
+
+@dp.message(Command("balance"))
+async def get_balance_cmd(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        return
+    parts = msg.text.split()
+    if len(parts) == 2:
+        try:
+            user_id = int(parts[1])
+            bal = get_balance(user_id)
+            await msg.answer(f"💰 Баланс пользователя {user_id}: {bal} 💎")
+        except:
+            await msg.answer("❌ Ошибка!")
+
 @dp.message()
 async def handle_admin_commands(msg: types.Message):
     user_id = msg.from_user.id
@@ -315,10 +369,12 @@ async def handle_admin_commands(msg: types.Message):
             try:
                 target_id = int(parts[0])
                 amount = int(parts[1])
+                old_balance = get_balance(target_id)
                 add_balance(target_id, amount)
-                await msg.answer(f"✅ Начислено {amount} 💎 пользователю {target_id}")
+                new_balance = get_balance(target_id)
+                await msg.answer(f"✅ Начислено {amount} 💎 пользователю {target_id}\n💰 Старый баланс: {old_balance}\n💰 Новый баланс: {new_balance}")
                 try:
-                    await bot.send_message(target_id, f"✅ Ваш баланс пополнен на {amount} 💎!\n💰 Новый баланс: {get_balance(target_id)} 💎")
+                    await bot.send_message(target_id, f"✅ Ваш баланс пополнен на {amount} 💎!\n💰 Новый баланс: {new_balance} 💎")
                 except:
                     pass
             except:
@@ -340,13 +396,7 @@ async def handle_admin_commands(msg: types.Message):
             await msg.answer("❌ Пример: `TEST 100 5`", parse_mode="Markdown")
         del user_states[user_id]
 
-@dp.callback_query(lambda c: c.data == "back")
-async def back(callback: types.CallbackQuery):
-    balance = get_balance(callback.from_user.id)
-    await callback.message.edit_text(f"👋 Главное меню\n💰 Баланс: {balance if balance != float('inf') else '∞'} 💎", reply_markup=main_menu(callback.from_user.id))
-    await callback.answer()
-
-# ============ Flask для Render ============
+# ============ FLASK ДЛЯ RENDER ============
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -362,6 +412,7 @@ threading.Thread(target=run_flask, daemon=True).start()
 async def main():
     print("✅ Casino бот запущен")
     print(f"👑 Админы: {ADMIN_ID} и {ADMIN_ID2}")
+    print(f"📁 Данные сохраняются в: {DATA_DIR}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
